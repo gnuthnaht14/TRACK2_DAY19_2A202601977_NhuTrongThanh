@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -26,6 +27,7 @@ Mode = Literal["keyword", "semantic", "hybrid"]
 EMBED_MODEL = Embedder().model_name
 EMBED_DIM = Embedder().dim
 COLLECTION = "lab19_corpus"
+QUERY_VECTOR_CACHE_SIZE = 512
 
 
 @dataclass
@@ -52,6 +54,10 @@ class Searcher:
         self.bm25: BM25Okapi | None = None
         self.client: QdrantClient | None = None
         self.embedder: Embedder | None = None
+        # Cache only the expensive query embedding, never the search results.
+        # This keeps ranking fresh if documents change while eliminating repeat
+        # ONNX inference for common/warmed queries.
+        self._query_vectors: OrderedDict[str, list[float]] = OrderedDict()
 
     @property
     def size(self) -> int:
@@ -160,9 +166,23 @@ class Searcher:
             for i in ranked
         ]
 
+    def _embed_query(self, query: str) -> list[float]:
+        """Return a cached query vector, evicting least-recently-used entries."""
+        assert self.embedder is not None
+        cached = self._query_vectors.get(query)
+        if cached is not None:
+            self._query_vectors.move_to_end(query)
+            return cached
+
+        vector = next(self.embedder.embed([query])).tolist()
+        self._query_vectors[query] = vector
+        if len(self._query_vectors) > QUERY_VECTOR_CACHE_SIZE:
+            self._query_vectors.popitem(last=False)
+        return vector
+
     def _search_semantic(self, query: str, top_k: int) -> list[SearchHit]:
         assert self.client is not None and self.embedder is not None
-        q_vec = next(self.embedder.embed([query])).tolist()
+        q_vec = self._embed_query(query)
         result = self.client.query_points(
             collection_name=COLLECTION,
             query=q_vec,

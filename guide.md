@@ -4,6 +4,10 @@ Tài liệu này giúp bạn hiểu dự án đang giải quyết bài toán gì
 liên kết với nhau như thế nào, cần viết phần code nào và phải tạo bằng chứng gì
 để hoàn thành bài lab.
 
+> **Phạm vi của guide:** chỉ sử dụng **Lite path** trên Windows. Toàn bộ hướng
+> dẫn bên dưới dùng FastEmbed, Qdrant in-memory, Feast SQLite/Parquet và không
+> yêu cầu Docker, Redis, PostgreSQL, GPU hoặc OpenAI API key.
+
 ## 1. Mục tiêu của dự án
 
 Dự án xây dựng một hệ thống tìm kiếm tài liệu tiếng Việt có ba chế độ:
@@ -59,9 +63,8 @@ Synthetic user/item/query events
             +--> point-in-time historical join
 ```
 
-Ở Lite path, Qdrant chạy trong bộ nhớ và Feast dùng SQLite/Parquet. Docker path
-thay chúng bằng Qdrant server, Redis và PostgreSQL nhưng không thay đổi mục tiêu
-của bài.
+Trong guide này, Qdrant luôn chạy trong bộ nhớ và Feast luôn dùng
+SQLite/Parquet. Không cần khởi động service bên ngoài.
 
 ## 3. Các khái niệm cần hiểu
 
@@ -147,7 +150,17 @@ Không nhầm hai loại notebook:
 
 ## 5. Chuẩn bị môi trường trên Windows
 
-Môi trường Lite đã đủ cho mọi tiêu chí core và là lựa chọn nên dùng trước.
+Môi trường Lite đủ cho mọi tiêu chí core. Không chạy `make setup-docker`,
+`make docker-up` hoặc thay `QDRANT_MODE` thành `server`.
+
+Cấu hình `.env` cần giữ như sau:
+
+```dotenv
+QDRANT_MODE=memory
+EMBEDDING_BACKEND=fastembed
+FEAST_ONLINE_STORE=sqlite
+FEAST_OFFLINE_STORE=file
+```
 
 ```powershell
 make setup-lite

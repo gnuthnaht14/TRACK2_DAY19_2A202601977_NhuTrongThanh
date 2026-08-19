@@ -22,12 +22,14 @@ import json
 import statistics
 from pathlib import Path
 
-from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from rank_bm25 import BM25Okapi
 
+from app.embeddings import Embedder
+
 DATA = Path(_setup.__file__).resolve().parent.parent / "data"
+COLLECTION = "lab19"
 
 # %% [markdown]
 # ## 1. Reload corpus + build both indices
@@ -40,24 +42,27 @@ tokenized = [(d["title"] + " " + d["text"]).lower().split() for d in docs]
 bm25 = BM25Okapi(tokenized)
 
 # Vector
-embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+embedder = Embedder("fastembed")
 client = QdrantClient(":memory:")
+if client.collection_exists(COLLECTION):
+    client.delete_collection(COLLECTION)
 client.create_collection(
-    collection_name="lab19",
-    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+    collection_name=COLLECTION,
+    vectors_config=VectorParams(size=embedder.dim, distance=Distance.COSINE),
 )
 BATCH = 64
-points = []
 for start in range(0, len(docs), BATCH):
     batch = docs[start:start + BATCH]
     texts = [d["title"] + " " + d["text"] for d in batch]
     vectors = list(embedder.embed(texts))
+    points = []
     for i, (d, v) in enumerate(zip(batch, vectors)):
         points.append(PointStruct(
             id=start + i, vector=v.tolist(),
             payload={"doc_id": d["doc_id"], "topic": d["topic"]},
         ))
-client.upsert(collection_name="lab19", points=points)
+    client.upsert(collection_name=COLLECTION, points=points)
+assert client.count(collection_name=COLLECTION, exact=True).count == len(docs) == 1000
 print(f"BM25 + vector indices ready ({len(docs)} docs)")
 
 # %% [markdown]
@@ -76,12 +81,12 @@ def search_keyword(query: str, top_k: int = TOP_K) -> list[str]:
 
 def search_semantic(query: str, top_k: int = TOP_K) -> list[str]:
     q_vec = next(embedder.embed([query])).tolist()
-    res = client.query_points(collection_name="lab19", query=q_vec, limit=top_k)
+    res = client.query_points(collection_name=COLLECTION, query=q_vec, limit=top_k)
     return [p.payload["doc_id"] for p in res.points]
 
 
 # %% [markdown]
-# ## 3. TODO — implement Reciprocal Rank Fusion
+# ## 3. Implement Reciprocal Rank Fusion
 #
 # Công thức (deck §3):
 #
@@ -100,9 +105,6 @@ def search_hybrid(query: str, top_k: int = TOP_K, rrf_k: int = RRF_K) -> list[st
     kw_ids = search_keyword(query, depth)
     sem_ids = search_semantic(query, depth)
 
-    # TODO: implement RRF fusion below.
-    # Hint: dict[doc_id, float] cộng 1/(rrf_k + rank) từ mỗi retriever.
-    # rank starts at 1, not 0.
     rrf: dict[str, float] = {}
     for rank, doc_id in enumerate(kw_ids, start=1):
         rrf[doc_id] = rrf.get(doc_id, 0.0) + 1.0 / (rrf_k + rank)
@@ -148,6 +150,9 @@ print(f"  Keyword (BM25)   : {statistics.mean(p_kw):.1%}")
 print(f"  Semantic (vector): {statistics.mean(p_sem):.1%}")
 print(f"  Hybrid  (RRF=60) : {statistics.mean(p_hyb):.1%}   <- should win")
 
+assert statistics.mean(p_hyb) > statistics.mean(p_kw), "hybrid must beat keyword on average"
+assert statistics.mean(p_hyb) > statistics.mean(p_sem), "hybrid must beat semantic on average"
+
 # %% [markdown]
 # ## 5. Slice theo loại query
 #
@@ -170,6 +175,11 @@ for t in ("exact", "paraphrase", "mixed"):
           f"{statistics.mean(m['kw']):>6.1%} "
           f"{statistics.mean(m['sem']):>6.1%} "
           f"{statistics.mean(m['hyb']):>6.1%}")
+
+mixed = by_type["mixed"]
+assert statistics.mean(mixed["hyb"]) > statistics.mean(mixed["kw"])
+assert statistics.mean(mixed["hyb"]) > statistics.mean(mixed["sem"])
+print("PASS — hybrid wins overall and on mixed queries")
 
 # %% [markdown]
 # ### Diễn giải kết quả

@@ -18,11 +18,13 @@ import _setup  # noqa: F401  -- adds repo root to sys.path
 import json
 from pathlib import Path
 
-from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 
+from app.embeddings import Embedder
+
 DATA = Path(_setup.__file__).resolve().parent.parent / "data"
+COLLECTION = "lab19"
 
 # %% [markdown]
 # ## 1. Load corpus
@@ -51,10 +53,12 @@ print(json.dumps(docs[0], ensure_ascii=False, indent=2))
 # > Cho lab này dùng `bge-small-en` để mọi laptop chạy được nhanh.
 
 # %%
-embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-sample = list(embedder.embed(["cloud computing tiếng Việt"]))[0]
-print(f"Vector dim: {len(sample)}")
+embedder = Embedder("fastembed")
+sample = next(embedder.embed(["cloud computing tiếng Việt"]))
+print(f"Backend: {embedder.backend} — {embedder.model_name}")
+print(f"Vector dim: {embedder.dim}")
 print(f"First 8 values: {sample[:8].tolist()}")
+assert len(sample) == embedder.dim
 
 # %% [markdown]
 # ## 3. Index vào Qdrant (in-memory mode)
@@ -65,13 +69,18 @@ print(f"First 8 values: {sample[:8].tolist()}")
 
 # %%
 client = QdrantClient(":memory:")
+
+# Cho phép chạy lại cell này mà không gặp lỗi "collection already exists".
+if client.collection_exists(COLLECTION):
+    client.delete_collection(COLLECTION)
+
 client.create_collection(
-    collection_name="lab19",
-    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+    collection_name=COLLECTION,
+    vectors_config=VectorParams(size=embedder.dim, distance=Distance.COSINE),
 )
 
 # %% [markdown]
-# ## 4. TODO — embed + upsert toàn bộ corpus
+# ## 4. Embed + upsert toàn bộ corpus
 #
 # Embed `title + " " + text` cho từng doc, batch theo 64 docs/lần (fastembed
 # CPU-bound, batch=64 là sweet spot). Upsert vào Qdrant collection `lab19`.
@@ -79,27 +88,32 @@ client.create_collection(
 # **Hint:** xem `app/search.py` `_build_vector_index()` để tham khảo pattern.
 
 # %%
-# TODO: implement the embed + upsert loop here.
 # Expected outcome: client.count("lab19") == 1000
 # (~30 seconds on first run as fastembed downloads the model.)
 
 BATCH = 64
-points: list[PointStruct] = []
 for start in range(0, len(docs), BATCH):
     batch = docs[start:start + BATCH]
     texts = [d["title"] + " " + d["text"] for d in batch]
     vectors = list(embedder.embed(texts))
+
+    points: list[PointStruct] = []
     for i, (d, v) in enumerate(zip(batch, vectors)):
         points.append(PointStruct(
             id=start + i,
             vector=v.tolist(),
-            payload={"doc_id": d["doc_id"], "topic": d["topic"], "title": d["title"]},
+            payload={
+                "doc_id": d["doc_id"],
+                "topic": d["topic"],
+                "title": d["title"],
+                "text": d["text"],
+            },
         ))
+    client.upsert(collection_name=COLLECTION, points=points)
 
-client.upsert(collection_name="lab19", points=points)
-n_indexed = client.count(collection_name="lab19").count
+n_indexed = client.count(collection_name=COLLECTION, exact=True).count
 print(f"Indexed: {n_indexed} vectors")
-assert n_indexed == 1000, f"expected 1000 indexed, got {n_indexed}"
+assert n_indexed == len(docs) == 1000, f"expected 1000 indexed, got {n_indexed}"
 
 # %% [markdown]
 # ## 5. First similarity search
@@ -111,7 +125,7 @@ assert n_indexed == 1000, f"expected 1000 indexed, got {n_indexed}"
 # %%
 query = "cloud computing và tự động mở rộng"
 q_vec = next(embedder.embed([query])).tolist()
-hits = client.query_points(collection_name="lab19", query=q_vec, limit=5).points
+hits = client.query_points(collection_name=COLLECTION, query=q_vec, limit=5).points
 
 print(f"Query: {query!r}")
 print(f"Top-5:")
@@ -127,11 +141,16 @@ for i, h in enumerate(hits, 1):
 # %%
 query2 = "phương pháp tự động mở rộng hạ tầng theo lưu lượng người dùng"
 q_vec2 = next(embedder.embed([query2])).tolist()
-hits2 = client.query_points(collection_name="lab19", query=q_vec2, limit=5).points
+hits2 = client.query_points(collection_name=COLLECTION, query=q_vec2, limit=5).points
 
 print(f"Query (paraphrase): {query2!r}")
 for h in hits2:
     print(f"  [{h.payload['topic']:>9}] score={h.score:.3f}  {h.payload['title']}")
+
+cloud_count = sum(h.payload["topic"] == "cloud" for h in hits2)
+print(f"Cloud documents in top-5: {cloud_count}/5")
+assert cloud_count >= 3, f"expected cloud to dominate top-5, got {cloud_count}/5"
+print("PASS — paraphrase query returns the correct cloud cluster")
 
 # %% [markdown]
 # ## Deliverable evidence (chụp màn hình)

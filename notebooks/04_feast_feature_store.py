@@ -147,7 +147,7 @@ print(f"Single lookup: {single_latency_ms:.2f}ms")
 print({k: v[0] for k, v in features.items()})
 
 # %% [markdown]
-# ## 5. TODO — Batch latency benchmark (100 lookups, P99)
+# ## 5. Batch latency benchmark (100 lookups, P99)
 
 # %%
 latencies: list[float] = []
@@ -185,7 +185,9 @@ else:
 import pandas as pd
 entity_df = pd.DataFrame({
     "user_id": ["u_001", "u_002", "u_003"],
-    "event_timestamp": [NOW - timedelta(hours=2), NOW - timedelta(hours=1), NOW],
+    # Each entity timestamp is later than its synthetic source record, so a
+    # correct PIT join returns all 3 rows without borrowing future features.
+    "event_timestamp": [NOW, NOW - timedelta(minutes=30), NOW],
 })
 
 historical = fs.get_historical_features(
@@ -196,6 +198,7 @@ historical = fs.get_historical_features(
     ],
 ).to_df()
 print(historical)
+assert len(historical) == 3, f"expected 3 PIT rows, got {len(historical)}"
 
 # %% [markdown]
 # ## Deliverable evidence
