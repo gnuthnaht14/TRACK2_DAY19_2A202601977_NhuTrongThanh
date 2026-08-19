@@ -1,26 +1,50 @@
 ## Day 19 — Vector Store + Feature Store lab.
 ## Two paths: lightweight (default, no Docker) and full Docker.
 
-VENV     := .venv
+VENV := .venv
+
+ifeq ($(OS),Windows_NT)
+SHELL := powershell.exe
+.SHELLFLAGS := -NoProfile -ExecutionPolicy Bypass -Command
+export PYTHONUTF8 := 1
+export PYTHONIOENCODING := utf-8
+PY       := ./$(VENV)/Scripts/python.exe
+PIP      := ./$(VENV)/Scripts/pip.exe
+JUPYTER  := ./$(VENV)/Scripts/jupyter.exe
+JUPYTEXT := ./$(VENV)/Scripts/jupytext.exe
+UVICORN  := ./$(VENV)/Scripts/uvicorn.exe
+PYTEST   := ./$(VENV)/Scripts/pytest.exe
+else
 PY       := $(VENV)/bin/python
 PIP      := $(VENV)/bin/pip
 JUPYTER  := $(VENV)/bin/jupyter
 JUPYTEXT := $(VENV)/bin/jupytext
 UVICORN  := $(VENV)/bin/uvicorn
 PYTEST   := $(VENV)/bin/pytest
+endif
 
 .DEFAULT_GOAL := help
 
 help: ## Show this help
+
+ifeq ($(OS),Windows_NT)
+	@Write-Host ''; Write-Host 'Usage:'; Write-Host '  make <target>'; Write-Host ''; Get-Content '$(firstword $(MAKEFILE_LIST))' | ForEach-Object { if ($$_ -match '^([a-zA-Z_-]+):.*?##\s*(.*)$$') { Write-Host ('  {0,-16} {1}' -f $$Matches[1], $$Matches[2]) } }
+else
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nLightweight path (default):\n"} \
 	      /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+endif
 
 # ─────────────────────────────────────────────────────────────
 # Lightweight path (default) — no Docker, in-process Qdrant
 # ─────────────────────────────────────────────────────────────
 
 setup-lite: ## [lite] Create venv + install + seed corpus + smoke test
+
+ifeq ($(OS),Windows_NT)
+	@& .\setup-lite.ps1
+else
 	@bash setup-lite.sh
+endif
 
 verify-lite: ## [lite] 5-second smoke test (Qdrant memory + BM25 + Feast SQLite)
 	@$(PY) scripts/verify_lite.py
@@ -32,8 +56,14 @@ api: ## [lite] Start FastAPI /search on http://localhost:8000
 	@$(UVICORN) app.main:app --reload --port 8000
 
 lab: ## [lite] Open Jupyter Lab on http://localhost:8888
+
+ifeq ($(OS),Windows_NT)
+	@& .\scripts\convert-notebooks.ps1
+	@& $(JUPYTER) lab --notebook-dir=notebooks --ServerApp.token='' --no-browser
+else
 	@$(JUPYTEXT) --to notebook --update notebooks/[0-9]*.py 2>/dev/null || true
 	@$(JUPYTER) lab --notebook-dir=notebooks --ServerApp.token='' --no-browser
+endif
 
 benchmark: ## [both] Precision@10 (keyword/semantic/hybrid) + P99 latency table
 	@$(PY) scripts/benchmark.py
@@ -46,6 +76,10 @@ gen-advanced: ## [both] Generate data for the advanced missions (NB6 + NB8)
 	@$(PY) scripts/gen_spend.py
 
 notebooks: ## [both] Execute ALL notebooks headless (what the grader runs)
+
+ifeq ($(OS),Windows_NT)
+	@& .\scripts\execute-notebooks.ps1
+else
 	@$(JUPYTEXT) --to notebook --update notebooks/[0-9]*.py >/dev/null 2>&1 || true
 	@for nb in notebooks/[0-9]*.ipynb; do \
 		printf '%-42s' "$$nb"; \
@@ -53,30 +87,56 @@ notebooks: ## [both] Execute ALL notebooks headless (what the grader runs)
 			--execute --inplace "$$nb" --ExecutePreprocessor.timeout=900 \
 			>/dev/null 2>&1 && echo PASS || echo FAIL; \
 	done
+endif
 
 clean-lite: ## [lite] Wipe venv + data + Feast registry
+
+ifeq ($(OS),Windows_NT)
+	@& .\scripts\clean-lite.ps1
+else
 	rm -rf $(VENV) data/corpus_vn.jsonl data/golden_set.jsonl data/qdrant_storage \
 	       data/agent_queries.jsonl \
 	       app/feast_repo/data app/feast_repo/registry.db app/feast_repo/online_store.db \
 	       app/feast_repo_ondemand/data app/feast_repo_ondemand/registry.db \
 	       app/feast_repo_ondemand/online_store.db \
 	       notebooks/*.ipynb notebooks/.ipynb_checkpoints
+endif
 
 # ─────────────────────────────────────────────────────────────
 # Docker path (full stack: Qdrant + Redis + Postgres)
 # ─────────────────────────────────────────────────────────────
 
 setup-docker: ## [docker] Bring up Docker stack + venv + seed + smoke test
+
+ifeq ($(OS),Windows_NT)
+	@& .\setup-docker.ps1
+else
 	@bash setup-docker.sh
+endif
 
 runtime-check: ## [docker] Report docker / podman / apple-container versions + capabilities
+
+ifeq ($(OS),Windows_NT)
+	@& .\scripts\runtime-check.ps1
+else
 	@bash scripts/runtime-check.sh
+endif
 
 container-up: ## [apple] Start the 3 services with Apple container (no compose)
+
+ifeq ($(OS),Windows_NT)
+	@throw "Apple 'container' only runs on Apple silicon/macOS. Use 'make docker-up' on Windows."
+else
 	@bash scripts/container-up.sh
+endif
 
 container-down: ## [apple] Stop the Apple container stack (add ARGS=--wipe to drop volumes)
+
+ifeq ($(OS),Windows_NT)
+	@throw "Apple 'container' only runs on Apple silicon/macOS. Use 'make docker-down' on Windows."
+else
 	@bash scripts/container-down.sh $(ARGS)
+endif
 
 verify-docker: ## [docker] Verify all 3 services reachable + Feast wired
 	@$(PY) scripts/verify_docker.py

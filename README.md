@@ -45,6 +45,36 @@ Yêu cầu: **Python 3.10–3.14**. Không cần Docker, không cần GPU, khôn
 Khi `setup-lite.sh` báo `All checks passed`, mở
 **http://localhost:8888/lab/tree/01_embeddings_index.ipynb** và bắt đầu.
 
+### Windows PowerShell
+
+`Makefile` tự nhận diện `OS=Windows_NT`, dùng `.venv\\Scripts` và gọi các
+script PowerShell tương đương. Cần cài GNU Make (ví dụ qua Chocolatey hoặc
+Scoop), sau đó dùng cùng các target:
+
+```powershell
+make setup-lite
+make api
+make benchmark
+make lab
+```
+
+Nếu không dùng Make, có thể chạy setup trực tiếp mà không cần Git Bash/WSL:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\setup-lite.ps1
+```
+
+Docker path trên Windows dùng Docker Desktop:
+
+```powershell
+make runtime-check
+make setup-docker
+```
+
+Các file `.sh` vẫn là entry point cho Linux/macOS; các file `.ps1` thực hiện
+cùng quy trình trên Windows. Apple `container` chỉ hỗ trợ macOS nên không có
+Windows target tương đương; trên Windows hãy dùng Docker Desktop.
+
 ### Tất cả lệnh `make`
 
 ```
